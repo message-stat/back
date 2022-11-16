@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "serve": "nodemon",
+    "serve": "cross-env NODE_ENV=DEV nodemon",
     "build": "rimraf ./build && tsc",
     "dev": "cross-env NODE_ENV=DEV node build/index.js",
     "prod": "cross-env NODE_ENV=PROD node build/index.js"
@@ -13,9 +13,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@clickhouse/client": "^0.0.9",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "knex": "^2.3.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.12",

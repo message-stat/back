@@ -2,11 +2,9 @@ import express from 'express'
 import { json } from 'body-parser'
 import cors from 'cors'
 import dotenv from './dotenv'
-
-
 import routes from './routes'
+import { db, dbInsert, dbSelect } from './db'
 
-dotenv.setup()
 
 const app = express();
 app.use(json({ limit: '50mb' }))
@@ -16,11 +14,10 @@ app.options('*', cors());
 app.use('/', routes)
 
 async function Start() {
-  const port = process.env.PORT;
 
   try {
-    app.listen(port, () => {
-      console.log(`App listening at http://localhost:${port}`)
+    app.listen(dotenv.PORT, () => {
+      console.log(`App listening at http://localhost:${dotenv.PORT}`)
     })
   }
   catch (e: any) {

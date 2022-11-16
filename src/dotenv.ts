@@ -14,6 +14,8 @@ export function setup() {
   dotenv.config({ path });
 }
 
-export default {
-  setup,
-}
+setup()
+
+export const env = process.env
+
+export default env
