@@ -11,7 +11,7 @@ app.use(json({ limit: '100mb' }))
 app.use(cors());
 app.options('*', cors());
 
-app.use('/', routes)
+app.use('/api', routes)
 
 async function Start() {
 

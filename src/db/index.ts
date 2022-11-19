@@ -1,5 +1,7 @@
 import { createClient } from '@clickhouse/client'
 import knex, { Knex } from 'knex'
+import { up } from './up'
+
 
 
 const { CLICKHOUSE_HOST, CLICKHOUSE_USER, CLICKHOUSE_PASSWORD, CLICKHOUSE_DATABASE } = process.env
@@ -11,6 +13,11 @@ const client = createClient({
   database: CLICKHOUSE_DATABASE ?? 'VKM'
 })
 
+up.split(';')
+  .map(t => t.trim())
+  .filter(t => t.length > 0)
+  .forEach((t) => client.exec({ query: t, }))
+
 const pg = knex({ client: 'pg' });
 
 export const db = async (builder: (knex: Knex) => Knex.QueryBuilder) => {
@@ -20,9 +27,9 @@ export const db = async (builder: (knex: Knex) => Knex.QueryBuilder) => {
 }
 
 export async function dbSelect<T>(builder: (knex: Knex) => Knex.QueryBuilder) {
-  const query = builder(pg).toSQL()
+  const query = builder(pg)
 
-  const result = await client.query({ query: query.sql })
+  const result = await client.query({ query: query.toQuery() })
   const json = await result.json() as {
     data: T[]
     meta: { name: string, type: string }[]
