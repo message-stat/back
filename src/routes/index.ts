@@ -54,7 +54,6 @@ router.post('/send', async (req, res) => {
       userId: session.userId,
       position: w.position,
       messageLength: w.length,
-      debug: w.debug,
     }))
   })
 
