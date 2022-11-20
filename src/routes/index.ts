@@ -12,7 +12,9 @@ router.get("/", (req, res) => {
 
 export interface IWord {
   text: string
-  debug: string
+  debug: string,
+  length: number
+  position: number
 }
 
 export interface ISendWordSession {
@@ -50,6 +52,8 @@ router.post('/send', async (req, res) => {
       text: w.text,
       dateTime: time,
       userId: session.userId,
+      position: w.position,
+      messageLength: w.length,
       debug: w.debug,
     }))
   })

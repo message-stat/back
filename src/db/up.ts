@@ -5,6 +5,8 @@ create table if not exists Word (
   dateTime DateTime64,
   text String,
   userId FixedString(64),
+  position Enum8('first' = 0, 'begin' = 1, 'center' = 2, 'end' = 3, 'last' = 4),
+  messageLength Enum8('single' = 0, 'short' = 1, 'medium' = 2, 'long' = 3),
   debug String
 ) engine = MergeTree()
   order by (userId, intHash32(toUInt32(dateTime)))
