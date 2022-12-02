@@ -1,0 +1,31 @@
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - main
+
+  release:
+    types: [published, created, edited]
+
+  workflow_dispatch:
+
+jobs:
+  Deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          port: ${{ secrets.PORT }}
+          script: |
+            cd /home/${{ secrets.USERNAME }}/web/vkstat/back/dev
+            git reset --hard @
+            git pull
+            npm i
+            pm2 start pm2/prod.json
+            pm2 save
