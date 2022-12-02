@@ -3,7 +3,7 @@ name: Deploy Production
 on:
   push:
     branches:
-      - main
+      - dev
 
   release:
     types: [published, created, edited]
