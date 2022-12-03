@@ -7,7 +7,7 @@ import { db, dbInsert, dbSelect } from './db'
 
 
 const app = express();
-app.use(json({ limit: '100mb' }))
+app.use(json({ limit: '500mb' }))
 app.use(cors());
 app.options('*', cors());
 
