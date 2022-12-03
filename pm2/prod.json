@@ -3,7 +3,9 @@
     {
       "name": "prod.vkstat",
       "script": "npm",
-      "args": ["run", "prod"]
+      "args": ["run", "prod"],
+      "instances": "max",
+      "exec_mode": "cluster"
     }
   ]
 }
