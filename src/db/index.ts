@@ -42,6 +42,7 @@ export async function dbSelect<T>(builder: (knex: Knex) => Knex.QueryBuilder) {
 
 export async function dbInsert(table: string, data: any[]) {
 
+  if (data.length === 0) return
   await client.insert({
     table: table,
     values: data,

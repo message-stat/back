@@ -70,12 +70,18 @@ router.post('/send', async (req, res) => {
     }))
   })
 
-  await Promise.all([
-    dbInsert('Word', words),
-    dbInsert('Message', messages)
-  ])
 
-  res.status(200).json({ status: 'ok' })
+  try {
+    await Promise.all([
+      dbInsert('Word', words),
+      dbInsert('Message', messages)
+    ])
+    res.status(200).json({ status: 'ok' })
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ status: 'error' })
+  }
+
 })
 
 router.get('/lastSend/:userId', async (req, res) => {
