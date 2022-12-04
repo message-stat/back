@@ -1,7 +1,10 @@
 import { Router } from "express";
 import { dbInsert, dbSelect } from "../db";
+import analytics from './analytics'
 
 const router = Router();
+
+router.use(analytics)
 
 router.get("/", (req, res) => {
   res.json({
