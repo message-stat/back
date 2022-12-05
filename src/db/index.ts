@@ -18,7 +18,7 @@ up.split(';')
   .filter(t => t.length > 0)
   .forEach((t) => client.exec({ query: t, }))
 
-const pg = knex({ client: 'pg' });
+export const pg = knex({ client: 'pg' });
 
 export const db = async (builder: (knex: Knex) => Knex.QueryBuilder) => {
   return await client.exec({
@@ -27,7 +27,10 @@ export const db = async (builder: (knex: Knex) => Knex.QueryBuilder) => {
 }
 
 export async function dbSelect<T>(builder: (knex: Knex) => Knex.QueryBuilder) {
-  const query = builder(pg)
+  return dbSelectRaw<T>(builder(pg))
+}
+export async function dbSelectRaw<T>(query: Knex.QueryBuilder) {
+  // console.log(query.toQuery());
 
   const result = await client.query({ query: query.toQuery() })
   const json = await result.json() as {
