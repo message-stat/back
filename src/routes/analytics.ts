@@ -44,11 +44,15 @@ router.get('/stats', async (req, res) => {
 })
 
 const chartByName: {
-  [key: string]: (params: ChartParams) => any
+  [key: string]: (params: ChartParams & any) => any
 } = {
   'wordCountByTime': wordCountByTime,
   'wordLengthByTime': wordLengthByTime,
   'wordDistribution': wordDistribution,
+  'messageLengthByTime': messageLengthByTime,
+  'messageCountByTime': messageCountByTime,
+  'wordLengthDistribution': wordLengthDistribution,
+  'topWords': topWords,
 }
 
 router.get('/load/:chart', async (req, res) => {
@@ -56,7 +60,7 @@ router.get('/load/:chart', async (req, res) => {
   const { userId } = req.query
 
   if (chart in chartByName) {
-    const result = await chartByName[chart]({ userId: userId as string })
+    const result = await chartByName[chart]({ userId: userId as string, ...req.query })
     return res.json(result)
   }
 
@@ -72,15 +76,15 @@ declare type ChartParams = {
 }
 
 declare type ChartResult = {
-  server: any[],
-  user: any[],
+  server: { x: any, y: any }[],
+  user: { x: any, y: any }[] | null,
   elapsed: number,
 }
 
 async function selectProcessed(params: {
   userId?: string,
   process: (knex: Knex) => Knex.QueryBuilder
-}) {
+}): Promise<ChartResult> {
   const server = params.process(pg)
 
   let user = null
@@ -90,11 +94,11 @@ async function selectProcessed(params: {
 
   const result = await Promise.all([server, user]
     .filter(t => t)
-    .map(t => selectRaw<any>(t!)))
+    .map(t => selectRaw<{ x: any, y: any }>(t!)))
 
   return {
-    server: result[0],
-    user: result.length > 1 ? result[1] : null,
+    server: result[0].data,
+    user: result.length > 1 ? result[1].data : null,
     elapsed: result.map(t => t.statistics.elapsed).reduce((a, b) => a + b, 0)
   }
 }
@@ -114,6 +118,21 @@ async function wordCountByTime(params: ChartParams) {
 
 }
 
+async function messageCountByTime(params: ChartParams) {
+  const groupBy = 'quarter';
+  const grop = `date_trunc('${groupBy}', dateTime)`
+
+
+  return await selectProcessed({
+    userId: params.userId,
+    process: (knex) => knex('Message')
+      .select(knex.raw(`${grop} as x`)).count('*', { as: 'y' })
+      .groupByRaw(grop)
+      .orderByRaw(grop)
+  })
+
+}
+
 async function wordLengthByTime(params: ChartParams) {
   const groupBy = 'quarter';
   const grop = `date_trunc('${groupBy}', dateTime)`
@@ -121,13 +140,45 @@ async function wordLengthByTime(params: ChartParams) {
 
   return await selectProcessed({
     userId: params.userId,
-    process: (knex) => knex('Word')
+    process: (knex) => knex.fromRaw('Word sample 1000000')
       .select(knex.raw(`${grop} as x, avg(length(text)) as y`))
       .groupByRaw(grop)
       .orderByRaw(grop)
-      .having(knex.raw('count(*) > 200'))
+      .having(knex.raw('count(*) > 500'))
   })
 
+}
+
+async function messageLengthByTime(params: ChartParams & { variant: 'word' | 'char' }) {
+  const groupBy = 'quarter';
+  const grop = `date_trunc('${groupBy}', dateTime)`
+  const select = pg.raw('x, avg(y) OVER (ORDER BY x ASC Rows BETWEEN 1 PRECEDING AND CURRENT ROW) as y')
+
+  const from = pg.fromRaw('Message sample 0.5')
+    .select(pg.raw(`${grop} as x, avg(${params.variant === 'word' ? 'words' : 'symbols'}) as y`))
+    .groupByRaw(grop)
+    .orderByRaw(grop)
+    .having(pg.raw('count(*) > 200'))
+
+  const server = pg.from(from)
+    .select(select)
+
+  const serverRes = await selectRaw<{ x: number, y: string }>(server)
+
+  let user = null
+
+  if (params.userId) {
+    user = await selectRaw<{ x: number, y: string }>(
+      pg.from(from.clone().where({ userId: params.userId }))
+        .select(select)
+    )
+  }
+
+  return {
+    server: serverRes.data,
+    user: user ? user.data : null,
+    elapsed: serverRes.statistics.elapsed
+  } as ChartResult
 }
 
 async function wordDistribution(params: ChartParams) {
@@ -169,7 +220,7 @@ async function wordDistribution(params: ChartParams) {
       server: postProcess(result[0].data),
       user: postProcess(result[1].data),
       elapsed: result.map(t => t.statistics.elapsed).reduce((a, b) => a + b, 0)
-    }
+    } as ChartResult
   }
 
 
@@ -177,7 +228,60 @@ async function wordDistribution(params: ChartParams) {
   return {
     server: postProcess(s.data),
     elapsed: s.statistics.elapsed
+  } as ChartResult
+}
+
+async function wordLengthDistribution(params: ChartParams) {
+  const from = pg.fromRaw('Word sample 100000')
+
+  function calc(sampe: Knex.QueryBuilder) {
+    return selectRaw<{ x: number, y: string }>(
+      sampe.select(pg.raw(`lengthUTF8(text) as x, count(*) / (${sampe.clone().count('*').toQuery()}) as y`))
+        .groupByRaw(pg.raw('lengthUTF8(text)'))
+        .groupByRaw(pg.raw('lengthUTF8(text)'))
+        .where(pg.raw('lengthUTF8(text) < 20'))
+    )
   }
+
+  let user = null
+  if (params.userId) {
+    user = calc(from.clone().where({ userId: params.userId }))
+  }
+
+  const result = await Promise.all([calc(from), user])
+  return {
+    server: result[0].data,
+    user: result[1] ? result[1].data : null,
+    elapsed: result.filter(t => t).map(t => t!.statistics.elapsed).reduce((a, b) => a + b, 0)
+  } as ChartResult
+
+}
+
+async function topWords(params: ChartParams) {
+
+  const sample = pg.fromRaw('Word sample 0.2')
+
+  if (params.userId) {
+    sample.where({ userId: params.userId })
+  }
+
+  const res = await select<{ x: string, y: string }>(t =>
+    t
+      .from('Word')
+      .groupBy('text')
+      .orderByRaw(pg.raw('count(*) desc'))
+      .select({
+        x: 'text',
+        y: pg.raw(`count(*) / (${sample.clone().count('*').toQuery()})`)
+      })
+      .limit(100)
+  )
+
+  return {
+    words: res.data,
+    elapsed: res.statistics.elapsed
+  }
+
 }
 
 
