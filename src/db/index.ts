@@ -1,4 +1,4 @@
-import { createClient } from '@clickhouse/client'
+import { ClickHouseClient, createClient } from '@clickhouse/client'
 import knex, { Knex } from 'knex'
 import { up } from './up'
 
@@ -13,10 +13,27 @@ const client = createClient({
   database: CLICKHOUSE_DATABASE ?? 'VKM'
 })
 
-up.split(';')
-  .map(t => t.trim())
-  .filter(t => t.length > 0)
-  .forEach((t) => client.exec({ query: t, }))
+export async function connect() {
+  let connected = false
+  while (!connected) {
+    try {
+      console.log('Connecting to ClickHouse...')
+      await client.query({ query: 'SELECT 1' })
+      connected = true
+    }
+    catch (e) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+
+    }
+  }
+
+
+  up.split(';')
+    .map(t => t.trim())
+    .filter(t => t.length > 0)
+    .forEach((t) => client.exec({ query: t, }))
+
+}
 
 export const pg = knex({ client: 'pg' });
 

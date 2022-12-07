@@ -7,7 +7,8 @@
     "serve": "cross-env NODE_ENV=DEV nodemon",
     "build": "rimraf ./build && tsc",
     "dev": "cross-env NODE_ENV=DEV node build/index.js",
-    "prod": "cross-env NODE_ENV=PROD node build/index.js"
+    "prod": "cross-env NODE_ENV=PROD node build/index.js",
+    "docker": "cross-env NODE_ENV=DOCKER node build/index.js"
   },
   "keywords": [],
   "author": "",

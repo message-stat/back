@@ -1,0 +1,5 @@
+.github/
+.vscode/
+pm2/
+node_modules/
+build/

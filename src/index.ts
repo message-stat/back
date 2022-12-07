@@ -3,7 +3,7 @@ import { json } from 'body-parser'
 import cors from 'cors'
 import dotenv from './dotenv'
 import routes from './routes'
-import { db, dbInsert, dbSelect } from './db'
+import { connect } from './db'
 
 
 const app = express();
@@ -14,6 +14,8 @@ app.options('*', cors());
 app.use('/api', routes)
 
 async function Start() {
+
+  await connect()
 
   try {
     app.listen(dotenv.PORT, () => {
