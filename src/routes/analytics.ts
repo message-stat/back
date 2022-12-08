@@ -53,6 +53,7 @@ const chartByName: {
   'messageCountByTime': messageCountByTime,
   'wordLengthDistribution': wordLengthDistribution,
   'topWords': topWords,
+  'wordDistributionByTime': wordDistributionByTime
 }
 
 router.get('/load/:chart', async (req, res) => {
@@ -60,8 +61,13 @@ router.get('/load/:chart', async (req, res) => {
   const { userId } = req.query
 
   if (chart in chartByName) {
-    const result = await chartByName[chart]({ userId: userId as string, ...req.query })
-    return res.json(result)
+    try {
+      const result = await chartByName[chart]({ userId: userId as string, ...req.query })
+      return res.json(result)
+    }
+    catch (e: any) {
+      return res.status(500).json({ error: e.message })
+    }
   }
 
   return res.status(404).json({ error: 'Chart not found' })
@@ -181,11 +187,20 @@ async function messageLengthByTime(params: ChartParams & { variant: 'word' | 'ch
   } as ChartResult
 }
 
-async function wordDistribution(params: ChartParams) {
+async function wordDistribution(params: ChartParams & { minWordCount: number, groupVariant: 'stem' | 'text' | 'lemma' }) {
+
+  const { userId, minWordCount, groupVariant } = params
   const sample = pg.fromRaw('Word sample 0.2')
 
   function calc(sampe: Knex.QueryBuilder) {
-    const count = sampe.clone().count('*', { as: 'count' }).select({ text: 'stem' }).groupBy('text')
+    let groupBy = 'text'
+    if (groupVariant === 'lemma') groupBy = 'lemma'
+    if (groupVariant === 'stem') groupBy = 'stem'
+
+    const count = sampe.clone().count('*', { as: 'count' }).select({ text: groupBy }).groupBy('text').having('count', '>', minWordCount)
+
+    console.log(count.toQuery());
+
 
     const sumState = pg.from(count)
       .select('count')
@@ -200,9 +215,6 @@ async function wordDistribution(params: ChartParams) {
 
     const res = pg.from(runningAccum).select('x').count('*', { as: 'y' }).groupBy('x').orderBy('x')
 
-
-    console.log(res.toQuery());
-
     return selectRaw<{ x: number, y: string }>(res)
   }
 
@@ -210,25 +222,80 @@ async function wordDistribution(params: ChartParams) {
     return res.map(t => ({ x: t.x, y: Number.parseInt(t.y) }))
   }
 
-  const server = calc(sample)
-
+  let user = null
   if (params.userId) {
-    const user = calc(sample.clone().where({ userId: params.userId }))
+    user = calc(sample.clone().where({ userId: params.userId }))
+  }
 
-    const result = await Promise.all([server, user])
-    return {
-      server: postProcess(result[0].data),
-      user: postProcess(result[1].data),
-      elapsed: result.map(t => t.statistics.elapsed).reduce((a, b) => a + b, 0)
-    } as ChartResult
+  const server = calc(sample)
+  const result = await Promise.all([server, user])
+
+  return {
+    server: postProcess(result[0].data),
+    user: result[1] ? postProcess(result[1].data) : null,
+    elapsed: result.filter(t => t).map(t => t!.statistics.elapsed).reduce((a, b) => a + b, 0)
+  } as ChartResult
+}
+
+async function wordDistributionByTime(params: ChartParams & { minWordCount: number, groupVariant: 'stem' | 'text' | 'lemma' }) {
+  const sample = pg.fromRaw('Word sample 0.2')
+  const groupedBy = pg.raw(`date_trunc('month', dateTime)`)
+
+  const { userId, minWordCount, groupVariant } = params
+  let groupBy = 'text'
+  if (groupVariant === 'lemma') groupBy = 'lemma'
+  if (groupVariant === 'stem') groupBy = 'stem'
+
+  function calc(sample: Knex.QueryBuilder) {
+    const count = sample.clone().count('*', { as: 'count' })
+      .select({ text: groupBy, date: groupedBy })
+      .groupBy(['text', 'date']).having('count', '>', minWordCount)
+
+    const sumState = pg.from(count)
+      .select({ count: 'count', text: 'text', date: 'date', sumState: pg.raw('sumState(count)') })
+      .groupBy(['text', 'count', 'date']).orderBy('date').orderBy('count', 'desc')
+
+    const countByDate = sample.clone().select({ date: groupedBy })
+      .count('*', { as: 'totalByGroup' })
+      .groupBy('date').having('totalByGroup', '>', 1000)
+
+    const extendedState = pg.from(sumState.as('S')).join(countByDate.as('C'), 'S.date', 'C.date')
+      .select({ count: 'S.count', date: 'S.date', sumState: 'S.sumState', totalByGroup: 'totalByGroup' })
+
+
+    const runningAccum = pg.from(extendedState)
+      .select({
+        y: 'count',
+        ra: pg.raw(`runningAccumulate(sumState, date) / totalByGroup`),
+        x: pg.raw('ceil(ra * 100)'),
+        date: 'date'
+      })
+
+    const tempRes = pg.from(runningAccum).select('x').select('date').count('*', { as: 'y' })
+      .groupBy(['date', 'x'])
+
+    const ySumState = pg.from(tempRes).select(['date', 'x', 'y']).select(pg.raw('sumState(y) as ySumState'))
+      .groupBy(['date', 'x', 'y']).orderBy(['date', 'x'])
+
+    const yRunningAccum = pg.from(ySumState).select(['date', 'x']).select(pg.raw(`runningAccumulate(ySumState, date) as y`))
+    return selectRaw<{ x: number, y: string, date: Date }>(yRunningAccum)
   }
 
 
-  const s = await server
+  let user = null
+  if (params.userId) {
+    console.log(sample.clone().where({ userId: params.userId }).toQuery());
+
+    user = calc(sample.clone().where({ userId: params.userId }))
+  }
+
+  const result = await Promise.all([calc(sample), user])
+
   return {
-    server: postProcess(s.data),
-    elapsed: s.statistics.elapsed
-  } as ChartResult
+    server: result[0].data,
+    user: result[1] ? result[1].data : null,
+    elapsed: result.filter(t => t).map(t => t!.statistics.elapsed).reduce((a, b) => a + b, 0)
+  }
 }
 
 async function wordLengthDistribution(params: ChartParams) {
