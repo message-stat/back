@@ -1,4 +1,4 @@
-import { Router } from "express";
+import e, { Router } from "express";
 import { Knex, knex } from "knex";
 import { dbSelect as select, dbSelectRaw as selectRaw, pg } from "../db";
 
@@ -53,7 +53,8 @@ const chartByName: {
   'messageCountByTime': messageCountByTime,
   'wordLengthDistribution': wordLengthDistribution,
   'topWords': topWords,
-  'wordDistributionByTime': wordDistributionByTime
+  'wordDistributionByTime': wordDistributionByTime,
+  'wordTrakingByTime': wordTrakingByTime
 }
 
 router.get('/load/:chart', async (req, res) => {
@@ -348,6 +349,44 @@ async function topWords(params: ChartParams) {
     words: res.data,
     elapsed: res.statistics.elapsed
   }
+
+}
+
+async function wordTrakingByTime(params: ChartParams & { word: string, group: 'stem' | 'text' | 'lemma', scale: 'absolute' | 'relative' }) {
+  const groupBy = 'quarter';
+  const grop = `date_trunc('${groupBy}', dateTime)`
+
+  const m = params.word.toLowerCase().trim().match(/([а-я|ё]+)|([a-z]+)/g)
+  const word = (m && m[0]) ? m[0] : ''
+  let where = pg.raw(`'${word}'`)
+  const lang = word.match(/[а-я|ё]+/)
+
+  if (params.group === 'stem') where = pg.raw(lang ? `stem('ru', lemmatize('ru', '${word}'))` : `stem('en', lemmatize('en', '${word}'))`)
+  if (params.group === 'lemma') where = pg.raw(lang ? `lemmatize('ru', '${word}')` : `lemmatize('en', '${word}')`)
+
+
+  let target = 'text'
+  if (params.group === 'stem') target = 'stem'
+  if (params.group === 'lemma') target = 'lemma'
+
+  return await selectProcessed({
+    userId: params.userId,
+    process: (knex) => {
+      const t = knex('Word')
+        .select(knex.raw(`${grop} as x`))
+        .where(target, where)
+        .groupByRaw(grop)
+        .orderByRaw(grop)
+
+      if (params.scale === 'relative') {
+        t.select(knex.raw(`count(*) / (${knex.from('Word').count('*').where(target, where).toQuery()}) as y`))
+      } else {
+        t.count('*', { as: 'y' })
+      }
+
+      return t
+    }
+  })
 
 }
 
