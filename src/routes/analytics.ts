@@ -191,7 +191,7 @@ async function messageLengthByTime(params: ChartParams & { variant: 'word' | 'ch
 async function wordDistribution(params: ChartParams & { minWordCount: number, groupVariant: 'stem' | 'text' | 'lemma' }) {
 
   const { userId, minWordCount, groupVariant } = params
-  const sample = pg.fromRaw('Word sample 0.2')
+  const sample = pg.fromRaw('Word sample 1000000')
 
   function calc(sampe: Knex.QueryBuilder) {
     let groupBy = 'text'
@@ -239,7 +239,7 @@ async function wordDistribution(params: ChartParams & { minWordCount: number, gr
 }
 
 async function wordDistributionByTime(params: ChartParams & { minWordCount: number, groupVariant: 'stem' | 'text' | 'lemma' }) {
-  const sample = pg.fromRaw('Word sample 0.2')
+  const sample = pg.fromRaw('Word sample 1000000')
   const groupedBy = pg.raw(`date_trunc('month', dateTime)`)
 
   const { userId, minWordCount, groupVariant } = params
@@ -327,7 +327,7 @@ async function wordLengthDistribution(params: ChartParams) {
 
 async function topWords(params: ChartParams) {
 
-  const sample = pg.fromRaw('Word sample 0.2')
+  const sample = pg.fromRaw('Word sample 1000000')
 
   if (params.userId) {
     sample.where({ userId: params.userId })
