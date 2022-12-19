@@ -47,7 +47,7 @@ export async function dbSelect<T>(builder: (knex: Knex) => Knex.QueryBuilder) {
   return dbSelectRaw<T>(builder(pg))
 }
 export async function dbSelectRaw<T>(query: Knex.QueryBuilder) {
-  console.log(query.toQuery());
+  // console.log(query.toQuery());
 
   const result = await client.query({ query: query.toQuery() })
   const json = await result.json() as {

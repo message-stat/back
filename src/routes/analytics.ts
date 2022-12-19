@@ -1,6 +1,7 @@
 import e, { Router } from "express";
 import { Knex, knex } from "knex";
 import { dbSelect as select, dbSelectRaw as selectRaw, pg } from "../db";
+import Atricles from './articles.json'
 
 const router = Router();
 
@@ -54,7 +55,8 @@ const chartByName: {
   'wordLengthDistribution': wordLengthDistribution,
   'topWords': topWords,
   'wordDistributionByTime': wordDistributionByTime,
-  'wordTrakingByTime': wordTrakingByTime
+  'wordTrakingByTime': wordTrakingByTime,
+  'pieWordPosition': pieWordPosition,
 }
 
 router.get('/load/:chart', async (req, res) => {
@@ -133,7 +135,10 @@ async function messageCountByTime(params: ChartParams) {
   return await selectProcessed({
     userId: params.userId,
     process: (knex) => knex('Message')
-      .select(knex.raw(`${grop} as x`)).count('*', { as: 'y' })
+      .select({
+        x: knex.raw(`${grop}`),
+        y: knex.raw('count(*) / count(distinct userId)')
+      })
       .groupByRaw(grop)
       .orderByRaw(grop)
   })
@@ -193,28 +198,32 @@ async function wordDistribution(params: ChartParams & { minWordCount: number, gr
   const { userId, minWordCount, groupVariant } = params
   const sample = pg.fromRaw('Word sample 1000000')
 
-  function calc(sampe: Knex.QueryBuilder) {
-    let groupBy = 'text'
-    if (groupVariant === 'lemma') groupBy = 'lemma'
-    if (groupVariant === 'stem') groupBy = 'stem'
+  let groupBy = 'text'
+  if (groupVariant === 'lemma') groupBy = 'lemma'
+  if (groupVariant === 'stem') groupBy = 'stem'
 
-    const count = sampe.clone().count('*', { as: 'count' }).select({ text: groupBy }).groupBy('text').having('count', '>', minWordCount)
+  function calc(sample: Knex.QueryBuilder) {
+    const inside = sample.clone()
+      .count('*', { as: 'count' })
+      .select({
+        text: groupBy,
+        sum: pg.raw('sum(count) over (order by count desc rows between unbounded preceding and current row)'),
+        total: pg.raw('sum(count) over ()'),
+        p: pg.raw('floor(sum / total * 100)')
+      })
+      .groupBy('text')
+      .having('count', '>', minWordCount)
+      .orderBy('count', 'desc')
 
-    console.log(count.toQuery());
-
-
-    const sumState = pg.from(count)
-      .select('count')
-      .select('text')
-      .select(pg.raw('sumState(count) as sumState'))
-      .groupBy('text').groupBy('count').orderBy('count', 'desc')
-
-    const runningAccum = pg.from(sumState)
-      .select('count')
-      .select(pg.raw(`runningAccumulate(sumState) / (${sampe.clone().count('*').toQuery()}) as ra`))
-      .select(pg.raw('ceil(ra * 100) as x'))
-
-    const res = pg.from(runningAccum).select('x').count('*', { as: 'y' }).groupBy('x').orderBy('x')
+    const res = pg.from(inside)
+      .select({
+        x: 'p',
+        y: pg.raw('sum(c) over (order by x rows between unbounded preceding and current row)')
+      })
+      .count('*', { as: 'c' })
+      .where('p', '<', '100')
+      .groupBy('p')
+      .orderBy('p')
 
     return selectRaw<{ x: number, y: string }>(res)
   }
@@ -239,7 +248,7 @@ async function wordDistribution(params: ChartParams & { minWordCount: number, gr
 }
 
 async function wordDistributionByTime(params: ChartParams & { minWordCount: number, groupVariant: 'stem' | 'text' | 'lemma' }) {
-  const sample = pg.fromRaw('Word sample 1000000')
+  const sample = pg.fromRaw('Word sample 2000000')
   const groupedBy = pg.raw(`date_trunc('month', dateTime)`)
 
   const { userId, minWordCount, groupVariant } = params
@@ -248,45 +257,35 @@ async function wordDistributionByTime(params: ChartParams & { minWordCount: numb
   if (groupVariant === 'stem') groupBy = 'stem'
 
   function calc(sample: Knex.QueryBuilder) {
-    const count = sample.clone().count('*', { as: 'count' })
-      .select({ text: groupBy, date: groupedBy })
-      .groupBy(['text', 'date']).having('count', '>', minWordCount)
-
-    const sumState = pg.from(count)
-      .select({ count: 'count', text: 'text', date: 'date', sumState: pg.raw('sumState(count)') })
-      .groupBy(['text', 'count', 'date']).orderBy('date').orderBy('count', 'desc')
-
-    const countByDate = sample.clone().select({ date: groupedBy })
-      .count('*', { as: 'totalByGroup' })
-      .groupBy('date').having('totalByGroup', '>', 1000)
-
-    const extendedState = pg.from(sumState.as('S')).join(countByDate.as('C'), 'S.date', 'C.date')
-      .select({ count: 'S.count', date: 'S.date', sumState: 'S.sumState', totalByGroup: 'totalByGroup' })
-
-
-    const runningAccum = pg.from(extendedState)
+    const inside = sample.clone()
+      .count('*', { as: 'count' })
       .select({
-        y: 'count',
-        ra: pg.raw(`runningAccumulate(sumState, date) / totalByGroup`),
-        x: pg.raw('ceil(ra * 100)'),
-        date: 'date'
+        text: groupBy,
+        date: groupedBy,
+        sum: pg.raw('sum(count) over (partition by date order by count desc rows between unbounded preceding and current row)'),
+        total: pg.raw('sum(count) over (partition by date )'),
+        t: pg.raw('floor(sum / total * 100)')
       })
+      .groupBy(['text', 'date']).having(' count  ', '>', minWordCount)
 
-    const tempRes = pg.from(runningAccum).select('x').select('date').count('*', { as: 'y' })
-      .groupBy(['date', 'x'])
 
-    const ySumState = pg.from(tempRes).select(['date', 'x', 'y']).select(pg.raw('sumState(y) as ySumState'))
-      .groupBy(['date', 'x', 'y']).orderBy(['date', 'x'])
+    const xy = pg.from(inside)
+      .select({
+        date: 'date',
+        x: 't',
+        y: pg.raw('sum("c") over (partition by "date" order by "t")')
+      })
+      .where('total', '>', 500)
+      .count('*', { as: 'c' })
+      .groupBy(['date', 't'])
+      .orderBy(['date', 't'])
 
-    const yRunningAccum = pg.from(ySumState).select(['date', 'x']).select(pg.raw(`runningAccumulate(ySumState, date) as y`))
-    return selectRaw<{ x: number, y: string, date: Date }>(yRunningAccum)
+    return selectRaw<{ x: number, y: string, date: Date }>(xy)
   }
 
 
   let user = null
   if (params.userId) {
-    console.log(sample.clone().where({ userId: params.userId }).toQuery());
-
     user = calc(sample.clone().where({ userId: params.userId }))
   }
 
@@ -325,7 +324,7 @@ async function wordLengthDistribution(params: ChartParams) {
 
 }
 
-async function topWords(params: ChartParams) {
+async function topWords(params: ChartParams & { article: string }) {
 
   const sample = pg.fromRaw('Word sample 1000000')
 
@@ -333,16 +332,24 @@ async function topWords(params: ChartParams) {
     sample.where({ userId: params.userId })
   }
 
+  if (params.article == 'false') {
+    sample.whereNotIn('text', Atricles)
+  }
+
+  const inside = pg.from(sample.clone())
+    .select({ x: 'text' })
+    .count('*', { as: 'count' })
+    .groupBy('text')
+    .orderBy('count', 'desc')
+    .limit(100)
+
   const res = await select<{ x: string, y: string }>(t =>
     t
-      .from('Word')
-      .groupBy('text')
-      .orderByRaw(pg.raw('count(*) desc'))
+      .from(inside)
       .select({
-        x: 'text',
-        y: pg.raw(`count(*) / (${sample.clone().count('*').toQuery()})`)
+        x: 'x',
+        y: pg.raw('count / sum(count) over ()')
       })
-      .limit(100)
   )
 
   return {
@@ -352,10 +359,9 @@ async function topWords(params: ChartParams) {
 
 }
 
-async function wordTrakingByTime(params: ChartParams & { word: string, group: 'stem' | 'text' | 'lemma', scale: 'absolute' | 'relative' }) {
-  const groupBy = 'quarter';
-  const grop = `date_trunc('${groupBy}', dateTime)`
 
+type WordTrakingParams = ChartParams & { word: string, group: 'stem' | 'text' | 'lemma', scale: 'absolute' | 'relative' }
+function whereWordTraking(params: WordTrakingParams) {
   const m = params.word.toLowerCase().trim().match(/([а-я|ё]+)|([a-z]+)/g)
   const word = (m && m[0]) ? m[0] : ''
   let where = pg.raw(`'${word}'`)
@@ -369,27 +375,78 @@ async function wordTrakingByTime(params: ChartParams & { word: string, group: 's
   if (params.group === 'stem') target = 'stem'
   if (params.group === 'lemma') target = 'lemma'
 
-  return await selectProcessed({
-    userId: params.userId,
-    process: (knex) => {
-      const t = knex('Word')
-        .select(knex.raw(`${grop} as x`))
+  return {
+    where,
+    target
+  }
+}
+
+
+async function wordTrakingByTime(params: WordTrakingParams) {
+  const groupBy = 'month';
+  const grop = `date_trunc('${groupBy}', dateTime)`
+
+  const { where, target } = whereWordTraking(params)
+
+  const sample = pg.from('Word')
+    .groupByRaw(grop)
+
+
+  function calc(sample: Knex.QueryBuilder) {
+
+    if (params.scale === 'relative') {
+
+      const left = sample.clone()
         .where(target, where)
-        .groupByRaw(grop)
-        .orderByRaw(grop)
+        .select({ date: pg.raw(grop), count: pg.raw('count(*)') })
 
-      if (params.scale === 'relative') {
-        t.select(knex.raw(`count(*) / (${knex.from('Word').count('*').where(target, where).toQuery()}) as y`))
-      } else {
-        t.count('*', { as: 'y' })
-      }
+      const right = sample.clone()
+        .select({ date: pg.raw(grop), count: pg.raw('count(*)') })
+        .having('count', '>', 5000)
 
-      return t
+      const all = pg.from(left.as('l'))
+        .join(right.as('r'), 'r.date', 'l.date')
+        .select({ x: 'l.date', y: pg.raw('l.count / r.count') })
+
+      return selectRaw<{ x: number, y: string }>(all)
+    } else {
+      const all = sample.clone()
+        .where(target, where)
+        .select({ x: pg.raw(grop), y: pg.raw('toInt32(count(*))') })
+        .orderBy('x')
+
+      return selectRaw<{ x: number, y: string }>(all)
     }
-  })
+  }
+
+
+  let user = null
+  if (params.userId) {
+    user = calc(sample.clone().where({ userId: params.userId }))
+  }
+
+  const result = await Promise.all([calc(sample), user])
+
+  return {
+    server: result[0].data,
+    user: result[1] ? result[1].data : null,
+    elapsed: result.filter(t => t).map(t => t!.statistics.elapsed).reduce((a, b) => a + b, 0)
+  } as ChartResult
 
 }
 
+async function pieWordPosition(params: WordTrakingParams) {
+  const { where, target } = whereWordTraking(params)
+
+  return await selectProcessed({
+    userId: params.userId,
+    process: (knex) => knex('Word')
+      .where(target, where)
+      .groupBy('position')
+      .select({ name: 'position', count: pg.raw('toInt32(count(*))') })
+      .orderBy('position')
+  })
+}
 
 
 export default router
