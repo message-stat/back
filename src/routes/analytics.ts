@@ -412,7 +412,7 @@ async function wordTrakingByTime(params: WordTrakingParams) {
     } else {
       const all = sample.clone()
         .where(target, where)
-        .select({ x: pg.raw(grop), y: pg.raw('toInt32(count(*))') })
+        .select({ x: pg.raw(grop), y: pg.raw('count(*) / count(distinct userId)') })
         .orderBy('x')
 
       return selectRaw<{ x: number, y: string }>(all)
