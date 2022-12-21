@@ -57,6 +57,7 @@ const chartByName: {
   'wordDistributionByTime': wordDistributionByTime,
   'wordTrakingByTime': wordTrakingByTime,
   'pieWordPosition': pieWordPosition,
+  'messageDistribution': messageDistribution
 }
 
 router.get('/load/:chart', async (req, res) => {
@@ -448,5 +449,74 @@ async function pieWordPosition(params: WordTrakingParams) {
   })
 }
 
+async function messageDistribution(params: WordTrakingParams & { variant: 'message' | 'word' | 'symbols' }) {
+  const sample = pg.from('Message')
+
+  const { variant } = params
+
+  let sum = 'count(*)'
+  if (variant === 'word') sum = 'sum(words)'
+  if (variant === 'symbols') sum = 'sum(symbols)'
+
+  function calc(sample: Knex.QueryBuilder) {
+
+    const byChat = sample.clone()
+      .groupBy(['userId', 'chatId'])
+      .select({
+        userId: 'userId',
+        chatId: 'chatId',
+        count: pg.raw(sum),
+        sum: pg.raw('sum(count) over (partition by userId order by userId, count desc rows between unbounded preceding and current row)'),
+        total: pg.raw('sum(count) over (partition by userId)'),
+        p: pg.raw('sum / total'),
+        pres: pg.raw('toUInt32(round(p * 100))')
+      })
+
+    const count = pg.from(byChat)
+      .groupBy(['userId', 'pres'])
+      .orderBy(['userId', 'pres'])
+      .select({
+        userId: 'userId',
+        pres: 'pres',
+        count: pg.raw('count(*)')
+      })
+
+    const users = sample.clone().distinct('userId')
+    const right = pg.fromRaw('numbers(100)')
+      .select({ pres: 'number', userId: 'userId' })
+      .join(users.as('U'), t => t.on(pg.raw('true')))
+
+    const joinded = pg.from(count.as('L'))
+      .fullOuterJoin(right.as('R'), t => t.on('L.userId', 'R.userId').on('L.pres', 'R.pres'))
+      .orderBy(['userId', 'pres'])
+      .select({
+        count: 'L.count',
+        userID: pg.raw(`if(R.userId = '', L.userId, R.userId)`),
+        pres: pg.raw(`if(L.pres = 0, R.pres, L.pres)`),
+        cum: pg.raw(`sum(count) over (partition by userID order by userID, pres rows between unbounded preceding and current row)`),
+        cumres: pg.raw(`if(cum = 0, 1, cum)`)
+      })
+
+    const all = pg.from(joinded)
+      .groupBy('pres')
+      .orderBy('pres')
+      .select({ x: 'pres', y: pg.raw('avg(cumres)') })
+
+    return selectRaw<{ x: number, y: string }>(all)
+  }
+
+  let user = null
+  if (params.userId) {
+    user = calc(sample.clone().where({ userId: params.userId }))
+  }
+
+  const result = await Promise.all([calc(sample), user])
+
+  return {
+    server: result[0].data,
+    user: result[1] ? result[1].data : null,
+    elapsed: result.filter(t => t).map(t => t!.statistics.elapsed).reduce((a, b) => a + b, 0)
+  } as ChartResult
+}
 
 export default router

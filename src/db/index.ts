@@ -49,7 +49,11 @@ export async function dbSelect<T>(builder: (knex: Knex) => Knex.QueryBuilder) {
 export async function dbSelectRaw<T>(query: Knex.QueryBuilder) {
   // console.log(query.toQuery());
 
-  const result = await client.query({ query: query.toQuery() })
+  const result = await client.query({
+    query: query.toQuery(), clickhouse_settings: {
+      joined_subquery_requires_alias: 0
+    }
+  })
   const json = await result.json() as {
     data: T[]
     meta: { name: string, type: string }[]
